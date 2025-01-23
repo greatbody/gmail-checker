@@ -12,80 +12,132 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Gmail API configuration
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.labels",
+    "https://www.googleapis.com/auth/gmail.modify"  # Add modify scope for label changes
+]
+
 
 def get_gmail_service():
     """Get Gmail API service instance."""
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
             creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
+        with open("token.json", "w") as token:
             token.write(creds.to_json())
-    
-    return build('gmail', 'v1', credentials=creds)
+
+    return build("gmail", "v1", credentials=creds)
+
+
+def create_processed_label(service):
+    """Create 'Processed' label if it doesn't exist."""
+    try:
+        # Try to get the label first
+        results = service.users().labels().list(userId="me").execute()
+        labels = results.get("labels", [])
+
+        for label in labels:
+            if label["name"] == "Processed":
+                return label["id"]
+
+        # Create label if it doesn't exist
+        label = {
+            "name": "Processed",
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        }
+        created_label = (
+            service.users().labels().create(userId="me", body=label).execute()
+        )
+        return created_label["id"]
+    except Exception as e:
+        print(f"Error creating label: {str(e)}")
+        return None
+
+
+def mark_as_processed(service, message_id, label_id):
+    """Add 'Processed' label to the email."""
+    try:
+        service.users().messages().modify(
+            userId="me", id=message_id, body={"addLabelIds": [label_id]}
+        ).execute()
+        print(f"Marked message {message_id} as processed")
+    except Exception as e:
+        print(f"Error marking message as processed: {str(e)}")
+
 
 def get_unread_emails(service):
     """Fetch unread emails from Gmail."""
     try:
-        results = service.users().messages().list(
-            userId='me',
-            labelIds=['UNREAD']
-        ).execute()
-        
-        messages = results.get('messages', [])
+        # Modify the query to exclude processed emails
+        results = (
+            service.users()
+            .messages()
+            .list(
+                userId="me",
+                labelIds=["UNREAD"],
+                q="-label:Processed",  # Exclude emails with Processed label
+            )
+            .execute()
+        )
+
+        messages = results.get("messages", [])
         if not messages:
             return []
-        
+
         emails = []
         for message in messages:
-            msg = service.users().messages().get(
-                userId='me',
-                id=message['id'],
-                format='full'
-            ).execute()
-            
-            headers = msg['payload']['headers']
-            subject = next(h['value'] for h in headers if h['name'].lower() == 'subject')
+            msg = (
+                service.users()
+                .messages()
+                .get(userId="me", id=message["id"], format="full")
+                .execute()
+            )
+
+            headers = msg["payload"]["headers"]
+            subject = next(
+                h["value"] for h in headers if h["name"].lower() == "subject"
+            )
             print("Found subject: ", subject)
             # Get email body
-            if 'parts' in msg['payload']:
-                parts = msg['payload']['parts']
-                data = parts[0]['body'].get('data', '')
+            if "parts" in msg["payload"]:
+                parts = msg["payload"]["parts"]
+                data = parts[0]["body"].get("data", "")
             else:
-                data = msg['payload']['body'].get('data', '')
-            
+                data = msg["payload"]["body"].get("data", "")
+
             if data:
-                body = base64.urlsafe_b64decode(data).decode('utf-8')
+                body = base64.urlsafe_b64decode(data).decode("utf-8")
             else:
-                body = ''
-            
-            emails.append({
-                'id': message['id'],
-                'subject': subject,
-                'body': body
-            })
-            # return emails
-        
+                body = ""
+
+            emails.append({"id": message["id"], "subject": subject, "body": body})
+
         return emails
     except Exception as e:
         print(f"Error fetching emails: {str(e)}")
         return []
 
+
 def analyze_with_deepseek(subject, body):
     """Analyze email importance using Deepseek API."""
-    api_key = os.getenv('DEEPSEEK_API_KEY')
-    api_url = os.getenv('DEEPSEEK_API_BASE', 'https://api.deepseek.com/v1') + '/chat/completions'
-    
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    api_url = (
+        os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+        + "/chat/completions"
+    )
+
     system_prompt = """You are an email importance analyzer. Your task is to determine if an email is important based on its subject and content. 
 Analyze the urgency, sender's role, content significance, and required actions. Respond with a JSON object containing 'is_important' (boolean) and 'reason' (string)."""
-    
+
     user_prompt = f"""Email Subject: {subject}
 Email Content: {body}
 
@@ -97,34 +149,31 @@ Analyze this email and determine if it's important. Consider:
 
 Respond ONLY with a valid JSON object containing:
 {{"is_important": boolean, "reason": "string"}}, remember the reason should be written in Chinese"""
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
+
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
     data = {
         "model": "deepseek-chat",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.7,
         "max_tokens": 500,
         "stream": False,
-        "response_format": { "type": "json_object" }
+        "response_format": {"type": "json_object"},
     }
-    
+
     try:
         response = requests.post(api_url, headers=headers, json=data)
         response.raise_for_status()
         result = response.json()
-        
-        if 'choices' not in result or not result['choices']:
+
+        if "choices" not in result or not result["choices"]:
             print("No choices in response")
             return None
-            
-        content = result['choices'][0]['message']['content']
+
+        content = result["choices"][0]["message"]["content"]
 
         return json.loads(content)
     except requests.exceptions.RequestException as e:
@@ -137,10 +186,11 @@ Respond ONLY with a valid JSON object containing:
         print(f"Other error: {str(e)}")
         return None
 
+
 def send_wechat_notification(email_data, analysis):
     """Send notification to Enterprise WeChat."""
-    webhook_url = os.getenv('WECHAT_WEBHOOK_URL')
-    
+    webhook_url = os.getenv("WECHAT_WEBHOOK_URL")
+
     message = {
         "msgtype": "markdown",
         "markdown": {
@@ -150,9 +200,9 @@ def send_wechat_notification(email_data, analysis):
 
 邮件内容预览:
 {email_data['body'][:200]}..."""
-        }
+        },
     }
-    
+
     try:
         response = requests.post(webhook_url, json=message)
         response.raise_for_status()
@@ -160,21 +210,32 @@ def send_wechat_notification(email_data, analysis):
     except Exception as e:
         print(f"Error sending WeChat notification: {str(e)}")
 
+
 def main():
     # Initialize Gmail service
     service = get_gmail_service()
-    
+
+    # Create or get the Processed label
+    processed_label_id = create_processed_label(service)
+    if not processed_label_id:
+        print("Failed to create/get Processed label")
+        return
+
     # Get unread emails
     unread_emails = get_unread_emails(service)
-    
+
     for email in unread_emails:
         # Analyze email importance
-        print("Analyzing email: ", email['subject'])
-        analysis = analyze_with_deepseek(email['subject'], email['body'])
-        
-        if analysis and analysis['is_important']:
+        print("Analyzing email: ", email["subject"])
+        analysis = analyze_with_deepseek(email["subject"], email["body"])
+
+        if analysis and analysis["is_important"]:
             # Send notification for important emails
             send_wechat_notification(email, analysis)
 
+        # Mark email as processed
+        mark_as_processed(service, email["id"], processed_label_id)
+
+
 if __name__ == "__main__":
-    main() 
+    main()
