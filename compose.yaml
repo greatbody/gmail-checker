@@ -1,0 +1,16 @@
+services:
+  gmail-checker:
+    image: ghcr.io/greatbody/gmail-checker:main
+    container_name: gmail-checker
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+    volumes:
+      - ./data:/app/data
+      - .env:/app/.env
+    networks:
+      - gmail-checker-net
+
+networks:
+  gmail-checker-net:
+    name: gmail-checker-net

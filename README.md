@@ -4,6 +4,8 @@ A Python script that monitors Gmail for unread emails, analyzes their importance
 
 ## Setup
 
+### Option 1: Local Setup
+
 1. Set up virtual environment:
 ```bash
 # Make setup script executable
@@ -30,9 +32,7 @@ source venv/bin/activate
       - Give it a name (e.g., "Mail Checker")
       - Click "Create"
       - Download the credentials JSON file
-      - Rename it to `credentials.json` and place it in your project root directory
-   
-   Note: The `token.json` file will be automatically created when you first run the script.
+      - Rename it to `credentials.json` and place it in the `data` directory
 
 3. Configure environment variables:
    - Copy `.env.example` to `.env`
@@ -40,6 +40,8 @@ source venv/bin/activate
    - Add your Enterprise WeChat webhook URL
 
 ## Usage
+
+### Option 1: Running Locally
 
 Make sure the virtual environment is activated:
 ```bash
@@ -51,11 +53,48 @@ Run the script:
 python mail_checker.py
 ```
 
-On first run:
-1. A browser window will open automatically
-2. Sign in to your Google account
-3. Grant the requested permissions to access your Gmail
-4. The script will automatically create `token.json` for future use
+### Option 2: Using Docker Compose
+
+1. Create required directories and set up credentials:
+```bash
+# Create directories
+mkdir -p data
+
+# Place your credentials.json in the data directory
+cp path/to/your/credentials.json data/
+```
+
+2. Pull and run the container:
+```bash
+docker compose pull
+docker compose up -d
+```
+
+3. View logs:
+```bash
+docker compose logs -f
+```
+
+4. Stop the service:
+```bash
+docker compose down
+```
+
+The Docker container will automatically:
+- Mount the `data` directory for storing credentials and tokens
+- Mount the `config` directory for configuration files
+- Use the latest image from GitHub Container Registry
+- Restart automatically unless stopped manually
+
+## Directory Structure
+```
+.
+├── config/          # Configuration files
+├── data/           # Credentials and tokens
+│   ├── credentials.json  # Your Google OAuth credentials
+│   └── token.json       # Auto-generated OAuth token
+└── ...
+```
 
 ## Features
 

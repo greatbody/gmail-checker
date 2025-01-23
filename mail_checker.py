@@ -18,20 +18,29 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify"  # Add modify scope for label changes
 ]
 
+# File paths
+DATA_DIR = "data"
+TOKEN_PATH = os.path.join(DATA_DIR, "token.json")
+CREDENTIALS_PATH = os.path.join(DATA_DIR, "credentials.json")
 
 def get_gmail_service():
     """Get Gmail API service instance."""
     creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if os.path.exists(TOKEN_PATH):
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            if not os.path.exists(CREDENTIALS_PATH):
+                raise FileNotFoundError(f"Credentials file not found at {CREDENTIALS_PATH}")
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open("token.json", "w") as token:
+        
+        # Ensure data directory exists
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(TOKEN_PATH, "w") as token:
             token.write(creds.to_json())
 
     return build("gmail", "v1", credentials=creds)
